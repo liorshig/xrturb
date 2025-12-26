@@ -27,14 +27,14 @@ class TestSmoothSavgol:
         """Test Savitzky-Golay smoothing."""
         smoothed = smooth_savgol(sample_dataset_1d, 'u', dim='x')
         
-        assert set(smoothed.dims) == {'x', 't'}
+        assert set(smoothed.dims) == {'x', 'time'}
         assert smoothed.name == 'u'
 
     def test_smooth_savgol_uniform_grid(self, sample_dataset_1d):
         """Test smoothing on uniform grid."""
         smoothed = smooth_savgol(sample_dataset_1d, 'u', dim='x')
         
-        assert set(smoothed.dims) == {'x', 't'}
+        assert set(smoothed.dims) == {'x', 'time'}
 
 
 class TestSmoothSpline:
@@ -42,11 +42,11 @@ class TestSmoothSpline:
         """Test spline smoothing."""
         smoothed = smooth_spline(sample_dataset_1d, 'u', dim='x')
         
-        assert set(smoothed.dims) == {'x', 't'}
+        assert set(smoothed.dims) == {'x', 'time'}
         assert smoothed.name == 'u'
 
     def test_smooth_spline_derivative(self, sample_dataset_1d):
         """Test spline smoothing with derivative."""
         smoothed_deriv = smooth_spline(sample_dataset_1d, 'u', dim='x', deriv=1)
         
-        assert set(smoothed_deriv.dims) == {'x', 't'}
+        assert set(smoothed_deriv.dims) == {'x', 'time'}

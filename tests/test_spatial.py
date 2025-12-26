@@ -11,7 +11,7 @@ class TestVorticity:
         
         assert 'vorticity' in vort.attrs['standard_name']
         assert vort.attrs['units'] == '1/s'
-        assert vort.dims == ('x', 'y', 't')
+        assert vort.dims == ('x', 'y', 'time')
 
     def test_vorticity_values(self, sample_dataset_single_frame):
         """Test vorticity with known values."""
@@ -35,7 +35,7 @@ class TestDivergence:
         
         assert 'divergence' in div.attrs['standard_name']
         assert div.attrs['units'] == '1/s'
-        assert div.dims == ('x', 'y', 't')
+        assert div.dims == ('x', 'y', 'time')
 
 
 class TestStrain:
@@ -45,7 +45,7 @@ class TestStrain:
         
         assert 'strain_rate' in strain_rate.attrs['standard_name']
         assert strain_rate.name == 'strain'
-        assert strain_rate.dims == ('x', 'y', 't')
+        assert strain_rate.dims == ('x', 'y', 'time')
 
 
 class TestAcceleration:
@@ -54,4 +54,4 @@ class TestAcceleration:
         acc = acceleration(sample_dataset)
         
         assert 'acceleration' in acc.attrs['standard_name']
-        assert acc.dims == ('x', 'y', 't')
+        assert acc.dims == ('x', 'y', 'time')

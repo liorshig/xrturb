@@ -25,12 +25,12 @@ class TurbulenceAccessor:
     # 1. CORE STATISTICAL HELPERS (Weighted)
     # =========================================================================
 
-    def mean(self, weights: Optional[str] = None, dim: str = 't') -> xr.Dataset:
+    def mean(self, weights: Optional[str] = None, dim: str = 'time') -> xr.Dataset:
         """Returns the (weighted) mean flow field."""
         return statistics.mean(self._obj, weights, dim)
 
     def fluct(self, var_key: str, weights: Optional[str] = None,
-              dim: str = 't') -> xr.DataArray:
+              dim: str = 'time') -> xr.DataArray:
         """
         Calculate fluctuations: u' = u - mean(u)
         Supports weighted means for LDV.
@@ -106,7 +106,7 @@ class TurbulenceAccessor:
 
     def calc_all_products(self, variables: Optional[List[str]] = None,
                          order: int = 2, weights: Optional[str] = None,
-                         dim: str = 't') -> xr.Dataset:
+                         dim: str = 'time') -> xr.Dataset:
         """
         Calculate all fluctuation products up to specified order.
 
@@ -179,7 +179,7 @@ class TurbulenceAccessor:
                      hole_size: float = 0,
                      hole_vars: Optional[Tuple[str, str]] = None,
                      weights: Optional[str] = None,
-                     dim: str = 't') -> xr.Dataset:
+                     dim: str = 'time') -> xr.Dataset:
         """
         Add quadrant/octant classification and hole filtering to dataset.
 
@@ -213,7 +213,7 @@ class TurbulenceAccessor:
                           x_var: str = 'u', y_var: str = 'w',
                           z_var: str = 'c', hole_size: float = 0,
                           hole_vars: Optional[Tuple[str, str]] = None,
-                          weights: Optional[str] = None, dim: str = 't',
+                          weights: Optional[str] = None, dim: str = 'time',
                           time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate conditional averages for each quadrant/octant.
@@ -249,7 +249,7 @@ class TurbulenceAccessor:
                               x_var: str = 'u', y_var: str = 'w',
                               z_var: str = 'c', hole_size: float = 0,
                               hole_vars: Optional[Tuple[str, str]] = None,
-                              weights: Optional[str] = None, dim: str = 't',
+                              weights: Optional[str] = None, dim: str = 'time',
                               time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate the fraction of total contribution from each quadrant.
@@ -285,7 +285,7 @@ class TurbulenceAccessor:
                                   x_var: str = 'u', y_var: str = 'w',
                                   z_var: str = 'c', hole_size: float = 0,
                                   hole_vars: Optional[Tuple[str, str]] = None,
-                                  weights: Optional[str] = None, dim: str = 't',
+                                  weights: Optional[str] = None, dim: str = 'time',
                                   time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate the contribution of each quadrant to the total.
@@ -323,7 +323,7 @@ class TurbulenceAccessor:
                               x_var: str = 'u', y_var: str = 'w',
                               z_var: str = 'c', hole_size: float = 0,
                               hole_vars: Optional[Tuple[str, str]] = None,
-                              weights: Optional[str] = None, dim: str = 't',
+                              weights: Optional[str] = None, dim: str = 'time',
                               time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate the time duration spent in each quadrant.

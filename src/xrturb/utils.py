@@ -30,11 +30,11 @@ def fill_nans(ds: xr.Dataset, method: Literal["linear", "nearest", "cubic"] = "n
         if var in ds_filled:
             # Use xarray map_blocks or explicit loop (explicit loop safer for griddata)
             # For brevity, implementing a simplified loop:
-            if 't' in ds_filled.dims:
-                for t in range(len(ds_filled.t)):
-                    frame = ds_filled[var].isel(t=t).values
+            if 'time' in ds_filled.dims:
+                for t in range(len(ds_filled.time)):
+                    frame = ds_filled[var].isel(time=t).values
                     if np.isnan(frame).any():
-                        ds_filled[var].isel(t=t).values[:] = _fill_frame(frame)
+                        ds_filled[var].isel(time=t).values[:] = _fill_frame(frame)
             else:
                 ds_filled[var].values[:] = _fill_frame(ds_filled[var].values)
                 

@@ -26,10 +26,10 @@ This example shows how to perform basic turbulence analysis on PIV data:
    # Create xarray Dataset
    ds = xr.Dataset(
        {
-           'u': (['x', 'y', 't'], u),
-           'v': (['x', 'y', 't'], v),
+           'u': (['x', 'y', 'time'], u),
+           'v': (['x', 'y', 'time'], v),
        },
-       coords={'x': x, 'y': y, 't': t}
+       coords={'x': x, 'y': y, 'time': t}
    )
 
    # Calculate mean flow

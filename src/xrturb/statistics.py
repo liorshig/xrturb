@@ -5,7 +5,7 @@ import numpy as np
 import xarray as xr
 
 
-def _weighted_mean(da: xr.DataArray, weights: Optional[xr.DataArray], dim: str = 't') -> xr.DataArray:
+def _weighted_mean(da: xr.DataArray, weights: Optional[xr.DataArray], dim: str = 'time') -> xr.DataArray:
     """Internal helper for weighted averaging."""
     if weights is not None:
         # Weighted Mean = Sum(x*w) / Sum(w)
@@ -13,7 +13,7 @@ def _weighted_mean(da: xr.DataArray, weights: Optional[xr.DataArray], dim: str =
     return da.mean(dim=dim)
 
 
-def mean(ds: xr.Dataset, weights: Optional[xr.DataArray] = None, dim: str = 't') -> xr.Dataset:
+def mean(ds: xr.Dataset, weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.Dataset:
     """Returns the (weighted) mean flow field."""
     if weights is not None:
         # We calculate weighted mean for all data variables
@@ -22,7 +22,7 @@ def mean(ds: xr.Dataset, weights: Optional[xr.DataArray] = None, dim: str = 't')
     return ds.mean(dim=dim)
 
 
-def fluct(ds: xr.Dataset, var_key: str, weights: Optional[xr.DataArray] = None, dim: str = 't') -> xr.DataArray:
+def fluct(ds: xr.Dataset, var_key: str, weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.DataArray:
     """
     Calculate fluctuations: u' = u - mean(u)
     Supports weighted means for LDV.
@@ -36,7 +36,7 @@ def fluct(ds: xr.Dataset, var_key: str, weights: Optional[xr.DataArray] = None, 
     return fluctuation
 
 
-def calculate_product(ds: xr.Dataset, product_key: str, weights: Optional[xr.DataArray] = None, dim: str = 't') -> xr.DataArray:
+def calculate_product(ds: xr.Dataset, product_key: str, weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.DataArray:
     """
     Calculates the element-wise product of variables (raw or fluctuating).
     Does NOT average the result.
@@ -54,7 +54,7 @@ def calculate_product(ds: xr.Dataset, product_key: str, weights: Optional[xr.Dat
         String defining the product (e.g., "u'v'", "uv").
     weights : xr.DataArray, optional
         Weighting variable (needed only if calculating fluctuations).
-    dim : str, default 't'
+    dim : str, default 'time'
         Dimension used to calculate the mean for fluctuations.
 
     Returns
@@ -106,8 +106,8 @@ def reynolds_stress(ds: xr.Dataset, weights: Optional[xr.DataArray] = None) -> x
     - For 3D data (u,v,w): uv, uw, vw
     - For 2D data (u,v): uv
     """
-    if 't' not in ds.coords:
-        raise ValueError("Time dimension 't' required for Reynolds Stress.")
+    if 'time' not in ds.coords:
+        raise ValueError("Time dimension 'time' required for Reynolds Stress.")
 
     # Detect available velocity components
     velocity_components = []
@@ -123,7 +123,7 @@ def reynolds_stress(ds: xr.Dataset, weights: Optional[xr.DataArray] = None) -> x
     for i, j in itertools.combinations(velocity_components, 2):
         product_key = f"{i}'{j}'"
         product = calculate_product(ds, product_key, weights)
-        rss = _weighted_mean(product, weights, dim='t')
+        rss = _weighted_mean(product, weights, dim='time')
         rss.name = f"{i}'{j}'"
         rss.attrs['standard_name'] = f"Reynolds_stress_{i}'{j}'"
         rss_components[product_key] = rss
@@ -144,7 +144,7 @@ def tke(ds: xr.Dataset, weights: Optional[xr.DataArray] = None) -> xr.DataArray:
     if not velocity_components:
         raise ValueError("No velocity components (u, v, w) found in dataset.")
 
-    if 't' not in ds.coords:
+    if 'time' not in ds.coords:
         # Fallback for single frame (Instantaneous KE)
         ke = 0.5 * sum(ds[comp]**2 for comp in velocity_components)
         ke.attrs["standard_name"] = "kinetic_energy"
@@ -154,7 +154,7 @@ def tke(ds: xr.Dataset, weights: Optional[xr.DataArray] = None) -> xr.DataArray:
     tke_sum = 0
     for comp in velocity_components:
         var_key = f"{comp}'{comp}'"
-        var = _weighted_mean(calculate_product(ds, var_key, weights), weights, dim='t')
+        var = _weighted_mean(calculate_product(ds, var_key, weights), weights, dim='time')
         tke_sum += var
     
     k = 0.5 * tke_sum # noqa: E741
@@ -177,7 +177,7 @@ def _calc_central_moments(ds: xr.Dataset, variables: List[str], order: int, weig
             product_key = ''.join(var + "'" for var in combination)
             prod = calculate_product(ds, product_key, weights=weights)
             # Average it
-            ds_moments[product_key] = _weighted_mean(prod, weights, dim='t')
+            ds_moments[product_key] = _weighted_mean(prod, weights, dim='time')
     return ds_moments
 
 
@@ -186,7 +186,7 @@ def _calc_standardized_moments(ds: xr.Dataset, variables: List[str], order: int,
     # Calculate standard deviations for normalization
     stds = {}
     for var in variables:
-        var_sq = _weighted_mean(calculate_product(ds, f"{var}'{var}'", weights), weights, dim='t')
+        var_sq = _weighted_mean(calculate_product(ds, f"{var}'{var}'", weights), weights, dim='time')
         stds[var] = var_sq ** 0.5
 
     ds_moments = xr.Dataset()
@@ -196,7 +196,7 @@ def _calc_standardized_moments(ds: xr.Dataset, variables: List[str], order: int,
             # Calculate raw moment
             product_key = ''.join(var + "'" for var in combination)
             prod = calculate_product(ds, product_key, weights=weights)
-            raw_moment = _weighted_mean(prod, weights, dim='t')
+            raw_moment = _weighted_mean(prod, weights, dim='time')
             # Normalize by product of stds
             norm_factor = 1.0
             for var in combination:
@@ -242,7 +242,7 @@ def calc_moments(ds: xr.Dataset, variables: Optional[List[str]] = None, order: i
         return _calc_central_moments(ds, variables, order, weights)
 
 
-def calc_all_products(ds: xr.Dataset, variables: Optional[List[str]] = None, order: int = 2, weights: Optional[xr.DataArray] = None, dim: str = 't') -> xr.Dataset:
+def calc_all_products(ds: xr.Dataset, variables: Optional[List[str]] = None, order: int = 2, weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.Dataset:
     """
     Calculate all fluctuation products up to specified order and add them to the dataset.
     
@@ -259,7 +259,7 @@ def calc_all_products(ds: xr.Dataset, variables: Optional[List[str]] = None, ord
         Maximum order of products to compute
     weights : xr.DataArray, optional
         Weighting variable for mean calculation in fluctuations
-    dim : str, default 't'
+    dim : str, default 'time'
         Dimension along which to calculate means for fluctuations
         
     Returns
@@ -286,56 +286,65 @@ def calc_all_products(ds: xr.Dataset, variables: Optional[List[str]] = None, ord
 
 
 
-def two_point_correlation(data: xr.Dataset, var_name: str = 'u', x_ref: Optional[float] = None, y_ref: Optional[float] = None) -> xr.DataArray:
+def two_point_correlation(
+    data: xr.Dataset, 
+    var_name: str = 'u', 
+    x_ref: Optional[float] = None, 
+    y_ref: Optional[float] = None,
+    x_dim: str = 'x',
+    y_dim: str = 'y'
+) -> xr.DataArray:
     """
     Calculates the 2-point spatial correlation for a specific variable 
-    in a pivpy xarray Dataset, relative to a reference point.
+    relative to a reference point, with customizable coordinate names.
     
-    The correlation is calculated as:
-    R_uu(dx, dy) = < u'(x_ref,y_ref,t) * u'(x_ref+dx, y_ref+dy, t) > / <u'^2>
-
     Parameters
     ----------
-    data : xarray.Dataset
-        The PIV dataset (standard pivpy format with t, y, x dimensions).
-    var_name : str, optional
-        The variable to correlate (default 'u').
-    x_ref : float, optional
-        The x-coordinate of the reference point. Default is data.x[0].
-    y_ref : float, optional
-        The y-coordinate of the reference point. Default is data.y[0].
-
-    Returns
-    -------
-    corr_xr : xarray.DataArray
-        A DataArray containing the 2D correlation map.
-        Coordinates are lag_x and lag_y, centered at the reference point.
+    ...
+    x_dim : str, optional
+        The name of the x-coordinate dimension (default 'x').
+    y_dim : str, optional
+        The name of the y-coordinate dimension (default 'y').
     """
     
-    # 1. Validation and Setup
+    # 1. Validation
     if var_name not in data:
         raise ValueError(f"Variable '{var_name}' not found in dataset.")
+    if x_dim not in data.dims or y_dim not in data.dims:
+        raise ValueError(f"Dimensions '{x_dim}' or '{y_dim}' not found in dataset.")
 
-    # Extract the DataArray for the specific variable
     da = data[var_name]
 
-    # Ensure dimensions are in expected order
-    if 't' not in da.dims:
-        raise ValueError("Dataset is missing the 't' (time) dimension.")
+    if 'time' not in da.dims:
+        raise ValueError("Dataset is missing the 'time' dimension.")
 
-    # 2. Determine reference point
+    # 2. Determine reference point using the dynamic dimension names
     if x_ref is None:
-        x_ref = float(data.x[0].values)
+        x_ref = float(data[x_dim][0].values)
     if y_ref is None:
-        y_ref = float(data.y[0].values)
+        y_ref = float(data[y_dim][0].values)
+
     # 3. Reynolds Decomposition (Fluctuations)
-    u_mean = da.mean(dim='t').compute()
-    u_prime = (da - u_mean).compute()
-    # Handle NaNs
-    u_prime_vals = u_prime.interpolate_na(dim='x', method='linear').fillna(0.0)
-    ref_point = u_prime.sel(x=x_ref, y=y_ref, method='nearest').compute()
-    corr = (u_prime_vals * ref_point).mean(dim='t').compute()
-    u_variance = u_prime_vals.var(dim='t').compute()
-    ref_point_variance = ref_point.var(dim='t').compute()
+    # Using 'time' as a hardcoded dimension for ensemble averaging
+    u_mean = da.mean(dim='time')
+    u_prime = da - u_mean
+    
+    # Handle NaNs - interpolate along the user-defined x_dim
+    u_prime_vals = u_prime
+    
+    # 4. Selection and Correlation
+    # We use a dictionary for .sel() to handle dynamic dimension names
+    selection_dict = {x_dim: x_ref, y_dim: y_ref}
+    ref_point = u_prime.sel(selection_dict, method='nearest')
+    
+    # Calculation
+    corr = (u_prime_vals * ref_point).mean(dim='time')
+    u_variance = u_prime_vals.var(dim='time')
+    ref_point_variance = ref_point.var(dim='time')
+    
     corr_coeff = corr / np.sqrt(u_variance * ref_point_variance)
+    
+    # Optional: Update the output name to reflect the correlation
+    corr_coeff.name = f"R_{var_name}{var_name}"
+    
     return corr_coeff

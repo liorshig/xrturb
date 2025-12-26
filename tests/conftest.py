@@ -18,13 +18,13 @@ def sample_dataset():
     
     ds = xr.Dataset(
         {
-            'u': (['x', 'y', 't'], u),
-            'v': (['x', 'y', 't'], v),
+            'u': (['x', 'y', 'time'], u),
+            'v': (['x', 'y', 'time'], v),
         },
         coords={
             'x': x,
             'y': y,
-            't': t,
+            'time': t,
         }
     )
     return ds
@@ -43,11 +43,11 @@ def sample_dataset_1d():
     
     ds = xr.Dataset(
         {
-            'u': (['x', 't'], u),
+            'u': (['x', 'time'], u),
         },
         coords={
             'x': x,
-            't': t,
+            'time': t,
         }
     )
     return ds
@@ -69,14 +69,14 @@ def sample_dataset_3d():
     
     ds = xr.Dataset(
         {
-            'u': (['x', 'y', 't'], u),
-            'v': (['x', 'y', 't'], v),
-            'w': (['x', 'y', 't'], w),
+            'u': (['x', 'y', 'time'], u),
+            'v': (['x', 'y', 'time'], v),
+            'w': (['x', 'y', 'time'], w),
         },
         coords={
             'x': x,
             'y': y,
-            't': t,
+            'time': t,
         }
     )
     return ds
@@ -122,14 +122,14 @@ def sample_dataset_3d():
     
     ds = xr.Dataset(
         {
-            'u': (['x', 'y', 't'], u),
-            'v': (['x', 'y', 't'], v),
-            'w': (['x', 'y', 't'], w),
+            'u': (['x', 'y', 'time'], u),
+            'v': (['x', 'y', 'time'], v),
+            'w': (['x', 'y', 'time'], w),
         },
         coords={
             'x': x,
             'y': y,
-            't': t,
+            'time': t,
         }
     )
     return ds

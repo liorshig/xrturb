@@ -12,20 +12,20 @@ class TestWeightedMean:
     def test_weighted_mean_basic(self, sample_dataset):
         """Test weighted mean calculation."""
         # Create weights
-        weights = np.ones_like(sample_dataset.t)
-        weights_da = xr.DataArray(weights, dims=['t'])
+        weights = np.ones_like(sample_dataset.time)
+        weights_da = xr.DataArray(weights, dims=['time'])
         
         result = _weighted_mean(sample_dataset['u'], weights_da)
         
         # Should be close to unweighted mean
-        expected = sample_dataset['u'].mean('t')
+        expected = sample_dataset['u'].mean('time')
         xr.testing.assert_allclose(result, expected, rtol=1e-10)
 
     def test_weighted_mean_none_weights(self, sample_dataset):
         """Test unweighted mean when weights=None."""
         result = _weighted_mean(sample_dataset['u'], None)
         
-        expected = sample_dataset['u'].mean('t')
+        expected = sample_dataset['u'].mean('time')
         xr.testing.assert_allclose(result, expected)
 
 
@@ -34,20 +34,20 @@ class TestMean:
         """Test mean calculation."""
         mean_ds = mean(sample_dataset)
         
-        assert 't' not in mean_ds.dims
+        assert 'time' not in mean_ds.dims
         assert 'u' in mean_ds
         assert 'v' in mean_ds
 
     def test_mean_with_weights(self, sample_dataset):
         """Test weighted mean."""
         # Add weights
-        weights = np.random.rand(len(sample_dataset.t))
-        weights_da = xr.DataArray(weights, dims=['t'], name='weights')
+        weights = np.random.rand(len(sample_dataset.time))
+        weights_da = xr.DataArray(weights, dims=['time'], name='weights')
         
         mean_ds = mean(sample_dataset, weights=weights_da)
         
         # Check that u has been averaged (no t dim)
-        assert 't' not in mean_ds['u'].dims
+        assert 'time' not in mean_ds['u'].dims
 
 
 class TestFluct:
@@ -55,9 +55,9 @@ class TestFluct:
         """Test fluctuation calculation."""
         fluct_u = fluct(sample_dataset, 'u')
         
-        assert fluct_u.dims == ('x', 'y', 't')
+        assert fluct_u.dims == ('x', 'y', 'time')
         # Mean of fluctuations should be close to zero
-        mean_fluct = fluct_u.mean('t')
+        mean_fluct = fluct_u.mean('time')
         np.testing.assert_allclose(mean_fluct.values, 0, atol=1e-10)
 
 
@@ -67,7 +67,7 @@ class TestCalculateProduct:
         product = calculate_product(sample_dataset, 'uv')
         
         assert product.name == 'uv'
-        assert product.dims == ('x', 'y', 't')
+        assert product.dims == ('x', 'y', 'time')
 
     def test_calculate_product_single_var(self, sample_dataset):
         """Test product calculation for single variable 'uu'."""
@@ -117,7 +117,7 @@ class TestTKE:
     def test_tke_with_w_component(self, sample_dataset):
         """Test TKE with w component."""
         w_data = 0.1 * np.random.randn(*sample_dataset['u'].shape)
-        ds_with_w = sample_dataset.assign(w=(['x', 'y', 't'], w_data))
+        ds_with_w = sample_dataset.assign(w=(['x', 'y', 'time'], w_data))
         
         tke_val = tke(ds_with_w)
         
@@ -128,7 +128,7 @@ class TestTKE:
         # Remove v from sample_dataset and add w
         ds_u_w = sample_dataset.drop_vars('v')
         w_data = 0.1 * np.random.randn(*sample_dataset['u'].shape)
-        ds_u_w = ds_u_w.assign(w=(['x', 'y', 't'], w_data))
+        ds_u_w = ds_u_w.assign(w=(['x', 'y', 'time'], w_data))
         
         tke_val = tke(ds_u_w)
         
@@ -187,8 +187,8 @@ class TestCalcProducts:
     def test_calc_all_products_with_weights(self, sample_dataset):
         """Test product calculation with weights."""
         # Add weights to the dataset
-        weights = np.random.rand(len(sample_dataset.t))
-        weights_da = xr.DataArray(weights, dims=['t'], name='weights')
+        weights = np.random.rand(len(sample_dataset.time))
+        weights_da = xr.DataArray(weights, dims=['time'], name='weights')
         
         products_ds = calc_all_products(sample_dataset, weights=weights_da)
         

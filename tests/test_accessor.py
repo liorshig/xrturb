@@ -20,7 +20,7 @@ class TestTurbulenceAccessor:
         vort = sample_dataset.turb.vorticity()
         
         assert 'vorticity' in vort.attrs['standard_name']
-        assert vort.dims == ('x', 'y', 't')
+        assert vort.dims == ('x', 'y', 'time')
 
     def test_divergence_accessor(self, sample_dataset):
         """Test divergence through accessor."""
@@ -32,13 +32,13 @@ class TestTurbulenceAccessor:
         """Test mean through accessor."""
         mean_ds = sample_dataset.turb.mean()
         
-        assert 't' not in mean_ds.dims
+        assert 'time' not in mean_ds.dims
 
     def test_fluct_accessor(self, sample_dataset):
         """Test fluctuations through accessor."""
         fluct_u = sample_dataset.turb.fluct('u')
         
-        assert fluct_u.dims == ('x', 'y', 't')
+        assert fluct_u.dims == ('x', 'y', 'time')
 
     def test_tke_accessor(self, sample_dataset):
         """Test TKE through accessor."""
