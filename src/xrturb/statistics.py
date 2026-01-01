@@ -1,8 +1,10 @@
 import itertools
 from typing import List, Optional
 import re
+import warnings
 import numpy as np
 import xarray as xr
+from scipy.optimize import curve_fit
 
 
 def _weighted_mean(da: xr.DataArray, weights: Optional[xr.DataArray], dim: str = 'time') -> xr.DataArray:
@@ -292,7 +294,7 @@ def two_point_correlation(
     x_ref: Optional[float] = None, 
     y_ref: Optional[float] = None,
     x_dim: str = 'x',
-    y_dim: str = 'y'
+    y_dim: str = 'y',
 ) -> xr.DataArray:
     """
     Calculates the 2-point spatial correlation for a specific variable 
@@ -319,23 +321,25 @@ def two_point_correlation(
         raise ValueError("Dataset is missing the 'time' dimension.")
 
     # 2. Determine reference point using the dynamic dimension names
-    if x_ref is None:
+    if x_ref is None and y_ref is None:
         x_ref = float(data[x_dim][0].values)
-    if y_ref is None:
         y_ref = float(data[y_dim][0].values)
+        selection_dict = { x_dim: x_ref, y_dim: y_ref}
 
+    elif x_ref is None or y_ref is None:
+        if x_ref is None:
+            selection_dict = { y_dim: y_ref}
+        else:
+            selection_dict = { x_dim: x_ref}
+    else:
+        selection_dict = { x_dim: x_ref, y_dim: y_ref}
     # 3. Reynolds Decomposition (Fluctuations)
     # Using 'time' as a hardcoded dimension for ensemble averaging
-    u_mean = da.mean(dim='time')
-    u_prime = da - u_mean
-    
-    # Handle NaNs - interpolate along the user-defined x_dim
-    u_prime_vals = u_prime
+    u_prime_vals = data.turb.fluct(var_name, dim='time')
     
     # 4. Selection and Correlation
     # We use a dictionary for .sel() to handle dynamic dimension names
-    selection_dict = {x_dim: x_ref, y_dim: y_ref}
-    ref_point = u_prime.sel(selection_dict, method='nearest')
+    ref_point = u_prime_vals.sel(selection_dict, method='nearest')
     
     # Calculation
     corr = (u_prime_vals * ref_point).mean(dim='time')
@@ -346,5 +350,94 @@ def two_point_correlation(
     
     # Optional: Update the output name to reflect the correlation
     corr_coeff.name = f"R_{var_name}{var_name}"
+    if x_ref is not None:
+        corr_coeff.coords['lag_'+x_dim] = corr_coeff.coords[x_dim] - corr_coeff.coords[x_dim].sel({x_dim: x_ref}, method='nearest')
+        corr_coeff = corr_coeff.swap_dims({x_dim: 'lag_'+x_dim})
+    if y_ref is not None:   
+        corr_coeff.coords['lag_'+y_dim] = corr_coeff.coords[y_dim] - corr_coeff.coords[y_dim].sel({y_dim: y_ref}, method='nearest')
+        corr_coeff = corr_coeff.swap_dims({y_dim: 'lag_'+y_dim})
+
+    corr_coeff.attrs['description'] = f"Two-point correlation of {var_name} relative to point ({x_ref}, {y_ref})"
+    corr_coeff.attrs[x_dim+'_ref'] = x_ref
+    corr_coeff.attrs[y_dim+'_ref'] = y_ref
     
     return corr_coeff
+
+
+def _calc_L_1e_kernel(lag_values : np.ndarray, corr_values : np.ndarray) -> float:
+    """1D Kernel: Finds the lag where correlation drops to 1/e."""
+    # Find first zero crossing to avoid noise-driven 1/e crossings
+    zero_idx = np.where(corr_values <= 0)[0]
+    if len(zero_idx) > 0:
+        limit = zero_idx[0]
+        lag_lim = lag_values[:limit]
+        corr_lim = corr_values[:limit]
+    else:
+        lag_lim, corr_lim = lag_values, corr_values
+
+    target = 1 / np.e
+    if np.min(corr_lim) > target:
+        warnings.warn(
+                        "1/e point not found before zero crossing. Returning NaN.",
+                        UserWarning, stacklevel=2
+                    )
+        return np.nan
+    try:
+        # Find the index where correlation first drops below the target.
+        # searchsorted works on ascending arrays, so we search in the reversed array.
+        idx = np.searchsorted(corr_lim[::-1], target)
+        
+        # Correct index for original (descending) array
+        # This gives us the first index where corr_lim[i] < target
+        i = len(corr_lim) - 1 - idx
+
+        # Basic linear interpolation between point i and i+1
+        # target = (1-t)*corr[i+1] + t*corr[i]
+        # lag = (1-t)*lag[i+1] + t*lag[i]
+        # Solving for t: t = (target - corr[i+1]) / (corr[i] - corr[i+1])
+        t = (target - corr_lim[i+1]) / (corr_lim[i] - corr_lim[i+1])
+        
+        return (1-t) * lag_lim[i+1] + t * lag_lim[i]
+
+    except (ValueError, IndexError):
+        return np.nan
+
+def _calc_L_fit_kernel(lag_values, corr_values):
+    """1D Kernel: Fits an exponential decay: exp(-x/L)."""
+    def exp_decay(x, L):
+        return np.exp(-x / L)
+    
+    try:
+        # p0=[50] is an initial guess for the length scale
+        popt, _ = curve_fit(exp_decay, lag_values, corr_values, p0=[50], maxfev=1000)
+        return popt[0]
+    except (ValueError, RuntimeError):
+        return np.nan
+
+
+
+def compute_length_scale(da, dim='lag_x', method='1e'):
+    """
+    Computes integral length scale and broadcasts over all other coordinates.
+    """
+    # 1. Cleaning and Pre-processing
+    # Ensure we only look at positive lags for the integral calculation
+    subset = da.where(da[dim] >= 0, drop=True)
+    
+    # Sort and interpolate to handle missing data in the correlation map
+    subset = subset.sortby(dim).interpolate_na(dim=dim)
+
+    # 2. Select the calculation method
+    kernel = _calc_L_1e_kernel if method == '1e' else _calc_L_fit_kernel
+
+    # 3. Use apply_ufunc for automatic broadcasting
+    return xr.apply_ufunc(
+        kernel,
+        subset[dim],      # This maps to 'lag_vec' in the kernel
+        subset,           # This maps to 'corr_vec' in the kernel
+        input_core_dims=[[dim], [dim]], # The 'row' dimension to consume
+        output_core_dims=[[]],          # The result is a scalar for each row
+        vectorize=True,                 # Tells xarray to loop over other dims
+        dask="parallelized",            # Supports dask chunks if data is large
+        output_dtypes=[float]
+    )

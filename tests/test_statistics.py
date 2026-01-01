@@ -1,11 +1,45 @@
 import numpy as np
 import xarray as xr
 import pytest
+
 from xrturb.statistics import (
     mean, fluct, calculate_product, reynolds_stress, 
     tke, calc_moments, calc_all_products, _weighted_mean,
-    two_point_correlation
+    two_point_correlation, compute_length_scale
 )
+
+class TestComputeLengthScale:
+    def test_compute_length_scale_1e(self, correlation_data_array):
+        """Test the 1/e method for length scale calculation."""
+        L = compute_length_scale(correlation_data_array, dim='lag_x', method='1e')
+        # The true length scale is 10.0, where correlation is exp(-lag/10)
+        # At lag=10, correlation is exp(-1) = 1/e
+        np.testing.assert_allclose(L.isel(y=0), 10.0, rtol=1e-3)
+
+    def test_compute_length_scale_fit(self, correlation_data_array):
+        """Test the exponential fit method for length scale calculation."""
+        L = compute_length_scale(correlation_data_array, dim='lag_x', method='fit')
+        # The fit should recover the true length scale of 10.0
+        np.testing.assert_allclose(L.isel(y=0), 10.0, rtol=1e-3)
+
+    def test_compute_length_scale_nan_case(self):
+        """Test case where correlation never drops below 1/e, should return NaN."""
+        lag = np.linspace(0, 50, 100)
+        # Correlation always above 1/e
+        corr = np.linspace(1, 0.5, 100)
+        da = xr.DataArray(corr, dims=['lag_x'], coords={'lag_x': lag})
+        
+        L = compute_length_scale(da, dim='lag_x', method='1e')
+        assert np.isnan(L.item())
+
+    def test_broadcasts_correctly(self, correlation_data_array):
+        """Test if the function broadcasts correctly over other dimensions."""
+        L = compute_length_scale(correlation_data_array, dim='lag_x', method='1e')
+        assert 'y' in L.dims
+        assert L.shape == (2,)
+        # Both values should be the same since the input was broadcasted
+        np.testing.assert_allclose(L.isel(y=0), L.isel(y=1))
+
 
 
 class TestWeightedMean:
@@ -202,13 +236,11 @@ class TestTwoPointCorrelation:
         corr = two_point_correlation(sample_dataset, var_name='u')
         
         # Check shape and dims
-        assert corr.dims == ('x', 'y')
+        assert corr.dims == ('lag_x', 'lag_y')
         assert corr.shape == (sample_dataset.x.size, sample_dataset.y.size)
         
         # The correlation at the reference point should be 1.0
-        ref_x = sample_dataset.x[0].item()
-        ref_y = sample_dataset.y[0].item()
-        np.testing.assert_allclose(corr.sel(x=ref_x, y=ref_y, method='nearest'), 1.0, atol=1e-5)
+        np.testing.assert_allclose(corr.sel(lag_x=0, lag_y=0, method='nearest'), 1.0, atol=1e-5)
 
     def test_two_point_correlation_reference_point(self, sample_dataset):
         """Test correlation with a specified reference point."""
@@ -216,12 +248,22 @@ class TestTwoPointCorrelation:
         corr = two_point_correlation(sample_dataset, var_name='u', x_ref=x_ref, y_ref=y_ref)
 
         # Check shape and dims
-        assert corr.dims == ('x', 'y')
+        assert corr.dims == ('lag_x', 'lag_y')
         
         # The correlation at the specified reference point should be 1.0
-        np.testing.assert_allclose(corr.sel(x=x_ref, y=y_ref, method='nearest'), 1.0, atol=1e-5)
+        np.testing.assert_allclose(corr.sel(lag_x=0, lag_y=0, method='nearest'), 1.0, atol=1e-5)
 
     def test_two_point_correlation_missing_variable(self, sample_dataset):
         """Test that it raises ValueError for a missing variable."""
         with pytest.raises(ValueError, match="Variable 'non_existent_var' not found"):
             two_point_correlation(sample_dataset, var_name='non_existent_var')
+    def test_two_point_correlation__row_operation(self, sample_dataset):
+        """Test 2-point correlation with only x reference (row operation)."""
+        x_ref = 1.5
+        corr = two_point_correlation(sample_dataset, var_name='u', x_ref=x_ref)
+
+        # Check shape and dims
+        assert corr.dims == ('lag_x', 'y')
+        
+        # The correlation at the specified reference point should be 1.0
+        np.testing.assert_allclose(corr.sel(lag_x=0, y=0, method='nearest'), 1.0, atol=1e-5)
