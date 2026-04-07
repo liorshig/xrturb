@@ -5,8 +5,53 @@ import pytest
 from xrturb.statistics import (
     mean, fluct, calculate_product, reynolds_stress, 
     tke, calc_moments, calc_all_products, _weighted_mean,
-    two_point_correlation, compute_length_scale
+    two_point_correlation, compute_length_scale, non_uniform_spectra
 )
+
+
+class TestNonUniformSpectra:
+    def test_non_uniform_spectra_basic(self):
+        """Test non-uniform spectra reproduces known frequency and time scale."""
+        rng = np.random.default_rng(42)
+        n_samples = 300
+        dt_nominal = 0.01
+        increments = dt_nominal * (1.0 + 0.15 * rng.standard_normal(n_samples))
+        increments = np.clip(increments, 0.002, None)
+        t = np.cumsum(increments)
+        f0 = 20.0
+        u = np.sin(2 * np.pi * f0 * t)
+        w = np.ones_like(u)
+
+        tau, R, f, S = non_uniform_spectra(
+            t=t,
+            u=u,
+            w=w,
+            dt=float(np.median(np.diff(t))),
+            K2=64,
+        )
+
+        assert tau.shape == (129,)
+        assert R.shape == (129,)
+        assert f.shape == (129,)
+        assert S.shape == (129,)
+        assert np.all(np.isfinite(np.real(R)))
+        assert np.all(np.isfinite(np.real(S)))
+
+        positive = f > 0
+        f_peak = f[positive][np.argmax(np.real(S[positive]))]
+        assert abs(f_peak - f0) < 1.0
+
+
+    def test_non_uniform_spectra_mismatched_lengths_raises(self):
+        """Time/signal/weight vectors must have the same length."""
+        with pytest.raises(ValueError, match="must have the same length"):
+            non_uniform_spectra(
+                t=np.array([0.0, 0.1, 0.2]),
+                u=np.array([1.0, 2.0]),
+                w=np.array([1.0, 1.0, 1.0]),
+                dt=0.1,
+                K2=2,
+            )
 
 class TestComputeLengthScale:
     def test_compute_length_scale_1e(self, correlation_data_array):
@@ -21,6 +66,41 @@ class TestComputeLengthScale:
         L = compute_length_scale(correlation_data_array, dim='lag_x', method='fit')
         # The fit should recover the true length scale of 10.0
         np.testing.assert_allclose(L.isel(y=0), 10.0, rtol=1e-3)
+
+    def test_compute_length_scale_integral(self):
+        """Test the integral method up to the first zero crossing."""
+        lag_x = np.linspace(0, 20, 201)
+        y = np.array([0])
+        corr = np.clip(1.0 - lag_x / 10.0, 0.0, None)
+
+        corr_2d, _ = xr.broadcast(
+            xr.DataArray(corr, dims=['lag_x'], coords={'lag_x': lag_x}),
+            xr.DataArray(y, dims=['y'], coords={'y': y}),
+        )
+
+        L = compute_length_scale(corr_2d, dim='lag_x', method='integral')
+
+        np.testing.assert_allclose(L.isel(y=0).item(), 5.0, rtol=1e-6)
+
+    def test_compute_length_scale_bi_fit(self):
+        """Test the bi-exponential fit returns two length scales."""
+        lag_x = np.linspace(0, 50, 120)
+        y = np.array([0])
+        L1_true, L2_true = 4.0, 20.0
+        a_true = 0.35
+        corr = a_true * np.exp(-lag_x / L1_true) + (1.0 - a_true) * np.exp(-lag_x / L2_true)
+
+        corr_2d, _ = xr.broadcast(
+            xr.DataArray(corr, dims=['lag_x'], coords={'lag_x': lag_x}),
+            xr.DataArray(y, dims=['y'], coords={'y': y}),
+        )
+
+        L = compute_length_scale(corr_2d, dim='lag_x', method='fit', fit_model='bi')
+
+        assert 'parameter' in L.dims
+        np.testing.assert_allclose(L.sel(parameter='a').item(), a_true, rtol=0.25)
+        np.testing.assert_allclose(L.sel(parameter='L1').item(), L1_true, rtol=0.25)
+        np.testing.assert_allclose(L.sel(parameter='L2').item(), L2_true, rtol=0.25)
 
     def test_compute_length_scale_nan_case(self):
         """Test case where correlation never drops below 1/e, should return NaN."""

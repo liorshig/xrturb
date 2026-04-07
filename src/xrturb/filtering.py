@@ -3,7 +3,7 @@ import xarray as xr
 from scipy.interpolate import splrep, BSpline
 from scipy.ndimage import gaussian_filter
 from scipy.signal import savgol_filter
-from typing import List
+from typing import List, Optional
 
 
 def filter_gaussian(ds: xr.Dataset, sigma: List[float] = [1.0, 1.0, 0.0], variables: List[str] = ['u', 'v'], **kwargs) -> xr.Dataset:
@@ -58,7 +58,7 @@ def smooth_savgol(ds: xr.Dataset, var_key: str, dim: str = 'z', window_length: i
     return smoothed
 
 
-def smooth_spline(ds: xr.Dataset, var_key: str, dim: str = 'z', s_factor: float = None, order: int = 3, deriv: int = 0) -> xr.DataArray:
+def smooth_spline(ds: xr.Dataset, var_key: str, dim: str = 'z', s_factor: Optional[float] = None, order: int = 3, deriv: int = 0) -> xr.DataArray:
     """
     Smooth using B-Splines (Robust for non-uniform data).
     """

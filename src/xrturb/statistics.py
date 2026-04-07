@@ -1,5 +1,5 @@
 import itertools
-from typing import List, Optional
+from typing import List, Optional, Tuple
 import re
 import warnings
 import numpy as np
@@ -402,21 +402,103 @@ def _calc_L_1e_kernel(lag_values : np.ndarray, corr_values : np.ndarray) -> floa
     except (ValueError, IndexError):
         return np.nan
 
-def _calc_L_fit_kernel(lag_values, corr_values):
-    """1D Kernel: Fits an exponential decay: exp(-x/L)."""
+def _calc_L_fit_kernel(lag_values: np.ndarray, corr_values: np.ndarray) -> float:
+    """1D Kernel: Fits a single exponential decay: exp(-x/L)."""
+
     def exp_decay(x, L):
         return np.exp(-x / L)
-    
+
     try:
-        # p0=[50] is an initial guess for the length scale
-        popt, _ = curve_fit(exp_decay, lag_values, corr_values, p0=[50], maxfev=1000)
-        return popt[0]
+        popt = np.asarray(curve_fit(exp_decay, lag_values, corr_values, p0=[50], maxfev=1000)[0], dtype=float)
+        return float(popt[0])
     except (ValueError, RuntimeError):
         return np.nan
 
 
+def _calc_L_fit_biexp_kernel(lag_values: np.ndarray, corr_values: np.ndarray) -> np.ndarray:
+    """1D Kernel: Fits a bi-exponential decay and returns a, L1, and L2."""
 
-def compute_length_scale(da, dim='lag_x', method='1e'):
+    def biexp_decay(x, a, L1, L2):
+        return a * np.exp(-x / L1) + (1.0 - a) * np.exp(-x / L2)
+
+    lag_values = np.asarray(lag_values, dtype=float)
+    corr_values = np.asarray(corr_values, dtype=float)
+
+    if lag_values.size < 3:
+        return np.array([np.nan, np.nan, np.nan], dtype=float)
+
+    lag_max = float(np.nanmax(lag_values)) if np.any(np.isfinite(lag_values)) else 1.0
+    if not np.isfinite(lag_max) or lag_max <= 0:
+        lag_max = 1.0
+
+    p0 = [0.5, max(lag_max / 10.0, 1e-6), max(lag_max / 2.0, 1e-6)]
+    bounds = ([0.0, 1e-12, 1e-12], [1.0, np.inf, np.inf])
+
+    try:
+        result = curve_fit(
+            biexp_decay,
+            lag_values,
+            corr_values,
+            p0=p0,
+            bounds=bounds,
+            maxfev=100000,
+        )
+        popt = np.asarray(result[0], dtype=float)
+        return np.asarray([popt[0], popt[1], popt[2]], dtype=float)
+    except (ValueError, RuntimeError):
+        return np.array([np.nan, np.nan, np.nan], dtype=float)
+
+
+def _calc_L_integral_kernel(lag_values: np.ndarray, corr_values: np.ndarray) -> float:
+    """1D Kernel: Integrates normalized correlation up to the first zero crossing."""
+    lag_values = np.asarray(lag_values, dtype=float)
+    corr_values = np.asarray(corr_values, dtype=float)
+
+    finite_mask = np.isfinite(lag_values) & np.isfinite(corr_values)
+    lag_values = lag_values[finite_mask]
+    corr_values = corr_values[finite_mask]
+
+    if lag_values.size < 2:
+        return np.nan
+
+    c0 = corr_values[0]
+    if not np.isfinite(c0) or c0 == 0:
+        return np.nan
+
+    corr_norm = corr_values / c0
+    zero_idx = np.where(corr_norm <= 0)[0]
+    if zero_idx.size == 0:
+        warnings.warn(
+            "Zero crossing not found for integral length scale. Returning NaN.",
+            UserWarning,
+            stacklevel=2,
+        )
+        return np.nan
+
+    end = int(zero_idx[0])
+    if end == 0:
+        return 0.0
+
+    if corr_norm[end] == 0:
+        tau = lag_values[: end + 1]
+        corr_use = corr_norm[: end + 1]
+    else:
+        x0 = lag_values[end - 1]
+        x1 = lag_values[end]
+        y0 = corr_norm[end - 1]
+        y1 = corr_norm[end]
+        if y1 == y0:
+            x_zero = x1
+        else:
+            x_zero = x0 + (0.0 - y0) * (x1 - x0) / (y1 - y0)
+        tau = np.concatenate([lag_values[:end], np.array([x_zero], dtype=float)])
+        corr_use = np.concatenate([corr_norm[:end], np.array([0.0], dtype=float)])
+
+    return float(np.trapz(corr_use, tau))
+
+
+
+def compute_length_scale(da: xr.DataArray, dim: str = 'lag_x', method: str = '1e', fit_model: str = 'single') -> xr.DataArray:
     """
     Computes integral length scale and broadcasts over all other coordinates.
     """
@@ -428,16 +510,232 @@ def compute_length_scale(da, dim='lag_x', method='1e'):
     subset = subset.sortby(dim).interpolate_na(dim=dim)
 
     # 2. Select the calculation method
-    kernel = _calc_L_1e_kernel if method == '1e' else _calc_L_fit_kernel
+    if method == '1e':
+        kernel = _calc_L_1e_kernel
+        output_core_dims = [[]]
+    elif method == 'integral':
+        kernel = _calc_L_integral_kernel
+        output_core_dims = [[]]
+    elif method == 'fit' and fit_model == 'bi':
+        kernel = _calc_L_fit_biexp_kernel
+        output_core_dims = [['parameter']]
+    else:
+        kernel = _calc_L_fit_kernel
+        output_core_dims = [[]]
 
     # 3. Use apply_ufunc for automatic broadcasting
-    return xr.apply_ufunc(
-        kernel,
-        subset[dim],      # This maps to 'lag_vec' in the kernel
-        subset,           # This maps to 'corr_vec' in the kernel
-        input_core_dims=[[dim], [dim]], # The 'row' dimension to consume
-        output_core_dims=[[]],          # The result is a scalar for each row
-        vectorize=True,                 # Tells xarray to loop over other dims
-        dask="parallelized",            # Supports dask chunks if data is large
-        output_dtypes=[float]
-    )
+    if method == 'fit' and fit_model == 'bi':
+        result = xr.apply_ufunc(
+            kernel,
+            subset[dim],      # This maps to 'lag_vec' in the kernel
+            subset,           # This maps to 'corr_vec' in the kernel
+            input_core_dims=[[dim], [dim]], # The 'row' dimension to consume
+            output_core_dims=output_core_dims,
+            vectorize=True,                 # Tells xarray to loop over other dims
+            dask="parallelized",            # Supports dask chunks if data is large
+            output_dtypes=[float],
+            dask_gufunc_kwargs={'output_sizes': {'parameter': 3}},
+        )
+    else:
+        result = xr.apply_ufunc(
+            kernel,
+            subset[dim],      # This maps to 'lag_vec' in the kernel
+            subset,           # This maps to 'corr_vec' in the kernel
+            input_core_dims=[[dim], [dim]], # The 'row' dimension to consume
+            output_core_dims=output_core_dims,
+            vectorize=True,                 # Tells xarray to loop over other dims
+            dask="parallelized",            # Supports dask chunks if data is large
+            output_dtypes=[float],
+        )
+
+    if method == 'fit' and fit_model == 'bi':
+        result = result.assign_coords(parameter=['a', 'L1', 'L2'])
+
+    return result
+
+
+def non_uniform_spectra(
+    t: np.ndarray,
+    u: np.ndarray,
+    w: np.ndarray,
+    dt: float,
+    K2: int,
+    meanrem: bool = True,
+    atw: bool = False,
+    locnor: bool = False,
+    selfproducts: bool = False,
+) -> Tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """
+    Estimate the autocorrelation and PSD for irregularly sampled data.
+
+    Parameters
+    ----------
+    t : array-like
+        Sample times [s].
+    u : array-like
+        Signal values.
+    w : array-like
+        Weights for each sample (for LDV typically transit-time based).
+    dt : float
+        Quantization time step [s].
+    K2 : int
+        Maximum lag index. Lags are evaluated from -K2 to +K2.
+    meanrem : bool, default True
+        Remove weighted mean before estimating correlation.
+    atw : bool, default False
+        Use arrival-time weighting.
+    locnor : bool, default False
+        Use local normalization.
+    selfproducts : bool, default False
+        Re-introduce self products at lag 0.
+
+    Returns
+    -------
+    tau : ndarray
+        Lag vector [s].
+    R : ndarray
+        Estimated autocorrelation function.
+    f : ndarray
+        Frequency vector [Hz].
+    S : ndarray
+        Power spectral density estimate from FFT(R).
+    """
+    t = np.asarray(t, dtype=float)
+    u = np.asarray(u, dtype=float)
+    w = np.asarray(w, dtype=float)
+
+    N = len(t)
+    if not (len(u) == N and len(w) == N):
+        raise ValueError("The time, signal, and weights vectors must have the same length.")
+    if N < 2:
+        raise ValueError("At least two samples are required.")
+    if dt <= 0:
+        raise ValueError("dt must be positive.")
+    if K2 < 1:
+        raise ValueError("K2 must be >= 1.")
+    if not np.all(np.isfinite(t)) or not np.all(np.isfinite(u)) or not np.all(np.isfinite(w)):
+        raise ValueError("Input arrays must be finite.")
+    if not np.all(np.diff(t) >= 0):
+        raise ValueError("The time vector t must be monotonically non-decreasing.")
+
+    K1 = -int(K2)
+    K2 = int(K2)
+    K = K2 - K1 + 1
+
+    if atw:
+        wf = np.append(t[1:N] - t[0:N - 1], [0])
+        wf[(wf > 5 * (t[N - 1] - t[0]) / (N - 1)) | (wf < 0)] = 0.0
+
+        wb = np.append([0], t[1:N] - t[0:N - 1])
+        wb[(wb > 5 * (t[N - 1] - t[0]) / (N - 1)) | (wb < 0)] = 0.0
+    else:
+        wf = w
+        wb = w
+
+    if meanrem:
+        ur = u - np.sum(wb * u) / float(np.sum(wb))
+    else:
+        ur = u
+
+    Je = int(np.ceil(t[N - 1] / float(dt))) + K2
+    Je = 2 ** int(np.ceil(np.log(Je) / np.log(2)))
+
+    if atw:
+        df = 1 / float(Je * dt)
+        fe = np.roll(np.arange(-(Je // 2), Je - (Je // 2)), -(Je // 2)) * df
+        U1 = np.zeros(Je, dtype=complex)
+        U0 = np.zeros(Je, dtype=complex)
+        Ub = np.zeros(Je, dtype=complex)
+        Wb = np.zeros(Je, dtype=complex)
+
+        if locnor:
+            Ui = np.zeros(Je, dtype=complex)
+            Uj = np.zeros(Je, dtype=complex)
+            Qb = np.zeros(Je, dtype=complex)
+
+        for i in range(0, N):
+            E = np.exp(-2j * np.pi * fe * np.floor(t[i] / float(dt)) * dt)
+            Uf = wf[i] * ur[i] * E
+            U1 += np.conj(Ub) * Uf
+            Ub += wb[i] * ur[i] * E
+            Wf = wf[i] * E
+            U0 += np.conj(Wb) * Wf
+            if locnor:
+                Qf = wf[i] * np.abs(ur[i]) ** 2 * E
+                Ui += np.conj(Qb) * Wf
+                Uj += np.conj(Wb) * Qf
+                Qb += wb[i] * np.abs(ur[i]) ** 2 * E
+            Wb += wb[i] * E
+
+        R1 = np.fft.ifft(U1 + np.conj(U1))
+        if locnor:
+            Ri = np.real(np.fft.ifft(Ui + np.conj(Uj)))
+            Rj = np.real(np.fft.ifft(Uj + np.conj(Ui)))
+        if (not locnor) or meanrem:
+            R0 = np.real(np.fft.ifft(U0 + np.conj(U0)))
+
+    else:
+        ue = np.zeros(Je, dtype=complex)
+        we = np.zeros(Je)
+        if locnor:
+            qe = np.zeros(Je)
+
+        for i in range(0, N):
+            idx = int(np.floor(t[i] / dt))
+            ue[idx] += w[i] * ur[i]
+            we[idx] += w[i]
+            if locnor:
+                qe[idx] += w[i] * np.abs(ur[i]) ** 2
+
+        U1 = np.fft.fft(ue)
+        U0 = np.fft.fft(we)
+
+        if locnor:
+            U2 = np.fft.fft(qe)
+
+        R1 = np.fft.ifft(np.conj(U1) * U1 - np.sum(np.abs(w * ur) ** 2))
+
+        if locnor:
+            Ri = np.real(np.fft.ifft(np.conj(U2) * U0 - np.sum(np.abs(w * ur) ** 2)))
+            Rj = np.real(np.fft.ifft(np.conj(U0) * U2 - np.sum(np.abs(w * ur) ** 2)))
+
+        if (not locnor) or meanrem:
+            R0 = np.real(np.fft.ifft(np.conj(U0) * U0 - np.sum(w ** 2)))
+
+    if selfproducts:
+        R1[0] += np.sum(wb * wf * np.abs(ur) ** 2)
+        if locnor:
+            Ri[0] += np.sum(wb * wf * np.abs(ur) ** 2)
+            Rj[0] += np.sum(wb * wf * np.abs(ur) ** 2)
+        if (not locnor) or meanrem:
+            R0[0] += np.sum(wb * wf)
+
+    tau = np.roll(np.arange(K1, K2 + 1), K1) * dt
+    R = np.zeros(K, dtype=complex)
+
+    if locnor:
+        s2u = np.sum(wb * np.abs(ur) ** 2) / float(np.sum(wb))
+        for k in range(K1, K2 + 1):
+            if Ri[k] * Rj[k] > 0:
+                R[k] = s2u * R1[k] / np.sqrt(Ri[k] * Rj[k])
+    else:
+        for k in range(K1, K2 + 1):
+            if R0[k] > 0:
+                R[k] = R1[k] / float(R0[k])
+
+    if meanrem:
+        denom = float(np.sum(wf) * np.sum(wb) - R0[0] - 2 * np.sum(R0[1:K2 + 1]))
+        if selfproducts:
+            R += (R[0] * R0[0] + 2 * np.sum(np.real(R1[1:K2 + 1]))) / denom
+        else:
+            R += (
+                R[0] * R0[0]
+                + 2 * np.sum(np.real(R1[1:K2 + 1]))
+                + np.sum(wf * wb * np.abs(ur) ** 2)
+            ) / (denom - np.sum(wf * wb))
+
+    df = 1 / float(K * dt)
+    f = np.roll(np.arange(-(K // 2), K - (K // 2)), -(K // 2)) * df
+    S = dt * np.fft.fft(R)
+
+    return tau, R, f, S

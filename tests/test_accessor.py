@@ -91,3 +91,29 @@ class TestTurbulenceAccessor:
         assert isinstance(products_ds, xr.Dataset)
         assert len(products_ds.data_vars) > len(sample_dataset.data_vars)
         assert tuple(products_ds.dims) == tuple(sample_dataset.dims)
+
+    def test_non_uniform_spectra_accessor_1d(self):
+        """Test non-uniform spectra through accessor for 1D signal."""
+        rng = np.random.default_rng(0)
+        n_samples = 256
+        base_dt = 0.01
+        increments = base_dt * (1.0 + 0.1 * rng.standard_normal(n_samples))
+        increments = np.clip(increments, 0.002, None)
+        time = np.cumsum(increments)
+        signal = np.sin(2 * np.pi * 6.0 * time)
+
+        ds = xr.Dataset(
+            data_vars={
+                'u': ('time', signal),
+                'transit_time': ('time', np.ones_like(signal)),
+            },
+            coords={'time': time},
+        )
+
+        out = ds.turb.non_uniform_spectra(var_key='u', weights='transit_time')
+
+        assert isinstance(out, xr.Dataset)
+        assert 'autocorrelation' in out
+        assert 'psd' in out
+        assert out['autocorrelation'].dims == ('lag',)
+        assert out['psd'].dims == ('frequency',)

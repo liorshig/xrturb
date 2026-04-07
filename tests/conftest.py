@@ -82,6 +82,30 @@ def sample_dataset_3d():
     return ds
 
 
+@pytest.fixture
+def sample_dataset_single_frame():
+    """Create a sample single-frame (no time dim) xarray Dataset for testing."""
+    x = np.linspace(0, 1, 10)
+    y = np.linspace(0, 1, 10)
+
+    X, Y = np.meshgrid(x, y, indexing='ij')
+
+    u = 1 + 0.1 * np.sin(2 * np.pi * X) + 0.05 * np.random.randn(*X.shape)
+    v = 0.1 * np.cos(2 * np.pi * Y) + 0.05 * np.random.randn(*X.shape)
+
+    ds = xr.Dataset(
+        {
+            'u': (['x', 'y'], u),
+            'v': (['x', 'y'], v),
+        },
+        coords={
+            'x': x,
+            'y': y,
+        }
+    )
+    return ds
+
+
 
 
 @pytest.fixture

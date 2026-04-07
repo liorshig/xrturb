@@ -1,6 +1,8 @@
 """Turbulence Analysis accessor for xarray Datasets."""
 
-from typing import List, Optional, Literal, Tuple
+from typing import List, Optional, Literal, Tuple, Union
+
+import numpy as np
 
 import xarray as xr
 
@@ -25,11 +27,11 @@ class TurbulenceAccessor:
     # 1. CORE STATISTICAL HELPERS (Weighted)
     # =========================================================================
 
-    def mean(self, weights: Optional[str] = None, dim: str = 'time') -> xr.Dataset:
+    def mean(self, weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.Dataset:
         """Returns the (weighted) mean flow field."""
         return statistics.mean(self._obj, weights, dim)
 
-    def fluct(self, var_key: str, weights: Optional[str] = None,
+    def fluct(self, var_key: str, weights: Optional[xr.DataArray] = None,
               dim: str = 'time') -> xr.DataArray:
         """
         Calculate fluctuations: u' = u - mean(u)
@@ -62,14 +64,14 @@ class TurbulenceAccessor:
     # =========================================================================
 
     def calculate_product(self, product_key: str,
-                         weights: Optional[str] = None) -> xr.DataArray:
+                         weights: Optional[xr.DataArray] = None) -> xr.DataArray:
         """
         Calculates the product of fluctuating variables.
         Example: 'uv' calculates u' * v'
         """
         return statistics.calculate_product(self._obj, product_key, weights)
 
-    def reynolds_stress(self, weights: Optional[str] = None) -> xr.Dataset:
+    def reynolds_stress(self, weights: Optional[xr.DataArray] = None) -> xr.Dataset:
         """
         Calculates Reynolds Shear Stress components: -rho * <u_i'u_j'>.
 
@@ -81,7 +83,7 @@ class TurbulenceAccessor:
         """
         return statistics.reynolds_stress(self._obj, weights)
 
-    def tke(self, weights: Optional[str] = None) -> xr.DataArray:
+    def tke(self, weights: Optional[xr.DataArray] = None) -> xr.DataArray:
         """
         Calculates Turbulent Kinetic Energy.
 
@@ -92,7 +94,7 @@ class TurbulenceAccessor:
         return statistics.tke(self._obj, weights)
 
     def calc_moments(self, variables: Optional[List[str]] = None, order: int = 2,
-                    weights: Optional[str] = None,
+                    weights: Optional[xr.DataArray] = None,
                     standardized: bool = False) -> xr.Dataset:
         """
         Calculate high-order moments for given variables.
@@ -105,7 +107,7 @@ class TurbulenceAccessor:
                                        standardized)
 
     def calc_all_products(self, variables: Optional[List[str]] = None,
-                         order: int = 2, weights: Optional[str] = None,
+                         order: int = 2, weights: Optional[xr.DataArray] = None,
                          dim: str = 'time') -> xr.Dataset:
         """
         Calculate all fluctuation products up to specified order.
@@ -117,12 +119,119 @@ class TurbulenceAccessor:
         return statistics.calc_all_products(self._obj, variables, order,
                                            weights, dim)
 
+    def non_uniform_spectra(
+        self,
+        var_key: str = 'u',
+        dim: str = 'time',
+        weights: Optional[Union[str, xr.DataArray]] = None,
+        dt: Optional[float] = None,
+        K2: Optional[int] = None,
+        meanrem: bool = True,
+        atw: bool = False,
+        locnor: bool = False,
+        selfproducts: bool = False,
+    ) -> xr.Dataset:
+        """
+        Estimate autocorrelation and PSD for a non-uniformly sampled 1D signal.
+
+        Parameters
+        ----------
+        var_key : str, default 'u'
+            Variable name in the dataset.
+        dim : str, default 'time'
+            Coordinate/dimension containing sample time.
+        weights : str or xr.DataArray, optional
+            Weight variable name in the dataset, or a 1D weight DataArray aligned
+            with ``dim``. If None, uniform weights are used.
+        dt : float, optional
+            Quantization time step. If None, uses median time increment.
+        K2 : int, optional
+            Maximum lag index. If None, uses ``max(1, n_samples // 4)``.
+        meanrem, atw, locnor, selfproducts : bool
+            Options forwarded to ``statistics.non_uniform_spectra``.
+
+        Returns
+        -------
+        xr.Dataset
+            Dataset with ``autocorrelation`` over ``lag`` and ``psd`` over
+            ``frequency``.
+        """
+        if var_key not in self._obj:
+            raise ValueError(f"Variable '{var_key}' not found.")
+
+        da = self._obj[var_key]
+        if dim not in da.dims:
+            raise ValueError(f"Dimension '{dim}' is not present in variable '{var_key}'.")
+
+        if da.ndim != 1 or da.dims != (dim,):
+            raise ValueError(
+                "non_uniform_spectra accessor currently supports only 1D signals "
+                f"with dims ('{dim}',)."
+            )
+
+        t = np.asarray(da[dim].values, dtype=float)
+        u = np.asarray(da.values, dtype=float)
+
+        if weights is None:
+            w = np.ones_like(u, dtype=float)
+        else:
+            if isinstance(weights, str):
+                if weights not in self._obj:
+                    raise ValueError(f"Weight variable '{weights}' not found.")
+                w_da = self._obj[weights]
+            elif isinstance(weights, xr.DataArray):
+                w_da = weights
+            else:
+                raise TypeError("weights must be a variable name (str), an xr.DataArray, or None.")
+
+            if w_da.ndim != 1 or w_da.dims != (dim,):
+                raise ValueError(
+                    "weights must be 1D and aligned with the signal dimension."
+                )
+            w = np.asarray(w_da.values, dtype=float)
+
+        if dt is None:
+            diffs = np.diff(t)
+            positive_diffs = diffs[diffs > 0]
+            if positive_diffs.size == 0:
+                raise ValueError("Cannot infer dt from time coordinate; provide dt explicitly.")
+            dt = float(np.median(positive_diffs))
+
+        if K2 is None:
+            K2 = max(1, len(t) // 4)
+
+        tau, R, f, S = statistics.non_uniform_spectra(
+            t=t,
+            u=u,
+            w=w,
+            dt=dt,
+            K2=K2,
+            meanrem=meanrem,
+            atw=atw,
+            locnor=locnor,
+            selfproducts=selfproducts,
+        )
+
+        return xr.Dataset(
+            data_vars={
+                'autocorrelation': xr.DataArray(np.real(R), dims=('lag',), coords={'lag': tau}),
+                'psd': xr.DataArray(np.real(S), dims=('frequency',), coords={'frequency': f}),
+            },
+            attrs={
+                'method': 'non_uniform_spectra',
+                'source_variable': var_key,
+                'source_dim': dim,
+                'dt': float(dt),
+                'K2': int(K2),
+            },
+        )
+
     # =========================================================================
     # 4. SIGNAL PROCESSING (Smoothing, Splines)
     # =========================================================================
 
-    def filter_gaussian(self, sigma: List[float] = None,
-                       variables: List[str] = None, **kwargs) -> xr.Dataset:
+    def filter_gaussian(self, sigma: Optional[List[float]] = None,
+                       variables: Optional[List[str]] = None, **kwargs) -> xr.Dataset:
         """Gaussian filtering of velocity fields."""
         if sigma is None:
             sigma = [1.0, 1.0, 0.0]
@@ -140,17 +249,42 @@ class TurbulenceAccessor:
         return filtering.smooth_savgol(self._obj, var_key, dim, window_length,
                                        polyorder, **kwargs)
 
-    def smooth_spline(self, var_key: str, dim: str = 'z', s_factor: float = None,
+    def smooth_spline(self, var_key: str, dim: str = 'z', s_factor: Optional[float] = None,
                      order: int = 3, deriv: int = 0) -> xr.DataArray:
         """Smooth using B-Splines (Robust for non-uniform data)."""
         return filtering.smooth_spline(self._obj, var_key, dim, s_factor, order,
                                        deriv)
+    
+    def smooth(self, var_key: str, method: str = 'savgol', **kwargs) -> xr.DataArray:
+        """
+        General smoothing function that selects method.
+
+        Parameters
+        ----------
+        var_key : str
+            Variable to smooth
+        method : str
+            'savgol' or 'spline'
+        kwargs : dict
+            Additional parameters for the chosen method
+
+        Returns
+        -------
+        xr.DataArray
+            Smoothed variable
+        """
+        if method == 'savgol':
+            return self.smooth_savgol(var_key, **kwargs)
+        elif method == 'spline':
+            return self.smooth_spline(var_key, **kwargs)
+        else:
+            raise ValueError(f"Unsupported smoothing method: {method}")
 
     # =========================================================================
     # 5. UTILITIES (Crop, Fill, Rotate)
     # =========================================================================
 
-    def crop(self, vector: List[Optional[float]] = None) -> xr.Dataset:
+    def crop(self, vector: Optional[List[Optional[float]]] = None) -> xr.Dataset:
         """Crops dataset by coordinates: [xmin, xmax, ymin, ymax]."""
         if vector is None:
             vector = [None, None, None, None]
@@ -178,7 +312,7 @@ class TurbulenceAccessor:
                      z_var: str = 'c', analysis_type: str = 'quadrant',
                      hole_size: float = 0,
                      hole_vars: Optional[Tuple[str, str]] = None,
-                     weights: Optional[str] = None,
+                     weights: Optional[xr.DataArray] = None,
                      dim: str = 'time') -> xr.Dataset:
         """
         Add quadrant/octant classification and hole filtering to dataset.
@@ -213,7 +347,7 @@ class TurbulenceAccessor:
                           x_var: str = 'u', y_var: str = 'w',
                           z_var: str = 'c', hole_size: float = 0,
                           hole_vars: Optional[Tuple[str, str]] = None,
-                          weights: Optional[str] = None, dim: str = 'time',
+                          weights: Optional[xr.DataArray] = None, dim: str = 'time',
                           time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate conditional averages for each quadrant/octant.
@@ -249,7 +383,7 @@ class TurbulenceAccessor:
                               x_var: str = 'u', y_var: str = 'w',
                               z_var: str = 'c', hole_size: float = 0,
                               hole_vars: Optional[Tuple[str, str]] = None,
-                              weights: Optional[str] = None, dim: str = 'time',
+                              weights: Optional[xr.DataArray] = None, dim: str = 'time',
                               time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate the fraction of total contribution from each quadrant.
@@ -285,7 +419,7 @@ class TurbulenceAccessor:
                                   x_var: str = 'u', y_var: str = 'w',
                                   z_var: str = 'c', hole_size: float = 0,
                                   hole_vars: Optional[Tuple[str, str]] = None,
-                                  weights: Optional[str] = None, dim: str = 'time',
+                                  weights: Optional[xr.DataArray] = None, dim: str = 'time',
                                   time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate the contribution of each quadrant to the total.
@@ -323,7 +457,7 @@ class TurbulenceAccessor:
                               x_var: str = 'u', y_var: str = 'w',
                               z_var: str = 'c', hole_size: float = 0,
                               hole_vars: Optional[Tuple[str, str]] = None,
-                              weights: Optional[str] = None, dim: str = 'time',
+                              weights: Optional[xr.DataArray] = None, dim: str = 'time',
                               time_var: str = 'transit_time') -> xr.Dataset:
         """
         Calculate the time duration spent in each quadrant.

@@ -1,11 +1,11 @@
-import xarray as xr
 import numpy as np
-from typing import Optional, Union, Tuple
+import xarray as xr
+from typing import Optional, Tuple, cast
 from .statistics import fluct, _weighted_mean
 
 
 def _quadrants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w',
-               weights: Optional[str] = None, dim: str = 'time') -> xr.Dataset:
+               weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.Dataset:
     """
     Classify data points into quadrants based on fluctuation signs.
 
@@ -39,12 +39,12 @@ def _quadrants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w',
             )
         )
     )
-    ds = ds.assign_coords(quadrantime=quadrant)
+    ds = ds.assign_coords(quadrant=quadrant)
     return ds
 
 
 def _octants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w', z_var: str = 'c',
-             weights: Optional[str] = None, dim: str = 'time') -> xr.Dataset:
+             weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.Dataset:
     """
     Classify data points into octants based on fluctuation signs.
 
@@ -78,12 +78,12 @@ def _octants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w', z_var: str = 'c
         xr.where((u_prime < 0) & (w_prime < 0) & (c_prime < 0), 7, 0) + \
         xr.where((u_prime > 0) & (w_prime < 0) & (c_prime < 0), 8, 0)
 
-    ds = ds.assign_coords(quadrantime=octant)
+    ds = ds.assign_coords(quadrant=octant)
     return ds
 
 
 def _hole_quadrants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w',
-                    hole_size: float = 0, weights: Optional[str] = None,
+                    hole_size: float = 0, weights: Optional[xr.DataArray] = None,
                     dim: str = 'time') -> xr.Dataset:
     """
     Apply hole filtering to quadrant analysis.
@@ -125,7 +125,7 @@ def _hole_quadrants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w',
 def add_quadrants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w', z_var: str = 'c',
                   analysis_type: str = 'quadrant', hole_size: float = 0,
                   hole_vars: Optional[Tuple[str, str]] = None,
-                  weights: Optional[str] = None, dim: str = 'time') -> xr.Dataset:
+                  weights: Optional[xr.DataArray] = None, dim: str = 'time') -> xr.Dataset:
     """
     Add quadrant/octant classification and hole filtering to dataset.
 
@@ -171,7 +171,7 @@ def add_quadrants(ds: xr.Dataset, x_var: str = 'u', y_var: str = 'w', z_var: str
 def calc_quadrant_mean(ds: xr.Dataset, analysis_type: str = 'quadrant',
                        x_var: str = 'u', y_var: str = 'w', z_var: str = 'c',
                        hole_size: float = 0, hole_vars: Optional[Tuple[str, str]] = None,
-                       weights: Optional[str] = None, dim: str = 'time',
+                       weights: Optional[xr.DataArray] = None, dim: str = 'time',
                        time_var: str = 'transit_time') -> xr.Dataset:
     """
     Calculate conditional averages for each quadrant/octant.
@@ -226,14 +226,14 @@ def calc_quadrant_mean(ds: xr.Dataset, analysis_type: str = 'quadrant',
     if not quadrants_lst:
         raise ValueError("No valid quadrant data found after filtering")
 
-    quadrant_mean = xr.concat(quadrants_lst, dim='quadrant')
+    quadrant_mean = cast(xr.Dataset, xr.concat(quadrants_lst, dim='quadrant'))
     return quadrant_mean
 
 
 def calc_quadrant_fraction(ds: xr.Dataset, analysis_type: str = 'quadrant',
                           x_var: str = 'u', y_var: str = 'w', z_var: str = 'c',
                           hole_size: float = 0, hole_vars: Optional[Tuple[str, str]] = None,
-                          weights: Optional[str] = None, dim: str = 'time',
+                          weights: Optional[xr.DataArray] = None, dim: str = 'time',
                           time_var: str = 'transit_time') -> xr.Dataset:
     """
     Calculate the fraction of total contribution from each quadrant.
@@ -282,7 +282,7 @@ def calc_quadrant_fraction(ds: xr.Dataset, analysis_type: str = 'quadrant',
 
     total_sum = ds_classified.where(ds_classified.hole == 1, drop=True).weighted(ds_classified[time_var]).sum(dim=dim)
     quadrant_sum = xr.concat(quadrants_lst, dim='quadrant')
-    quadrant_fraction = quadrant_sum / total_sum
+    quadrant_fraction = cast(xr.Dataset, quadrant_sum / total_sum)
 
     return quadrant_fraction
 
@@ -290,7 +290,7 @@ def calc_quadrant_fraction(ds: xr.Dataset, analysis_type: str = 'quadrant',
 def calc_quadrant_contribution(ds: xr.Dataset, analysis_type: str = 'quadrant',
                               x_var: str = 'u', y_var: str = 'w', z_var: str = 'c',
                               hole_size: float = 0, hole_vars: Optional[Tuple[str, str]] = None,
-                              weights: Optional[str] = None, dim: str = 'time',
+                              weights: Optional[xr.DataArray] = None, dim: str = 'time',
                               time_var: str = 'transit_time') -> xr.Dataset:
     """
     Calculate the contribution of each quadrant to total Reynolds stress.
@@ -339,7 +339,7 @@ def calc_quadrant_contribution(ds: xr.Dataset, analysis_type: str = 'quadrant',
 
     total_time = ds_classified.where(ds_classified.hole == 1, drop=True)[time_var].sum(dim=dim)
     quadrant_sum = xr.concat(quadrants_lst, dim='quadrant')
-    quadrant_contribution = quadrant_sum / total_time
+    quadrant_contribution = cast(xr.Dataset, quadrant_sum / total_time)
 
     return quadrant_contribution
 
@@ -347,7 +347,7 @@ def calc_quadrant_contribution(ds: xr.Dataset, analysis_type: str = 'quadrant',
 def calc_quadrant_duration(ds: xr.Dataset, analysis_type: str = 'quadrant',
                           x_var: str = 'u', y_var: str = 'w', z_var: str = 'c',
                           hole_size: float = 0, hole_vars: Optional[Tuple[str, str]] = None,
-                          weights: Optional[str] = None, dim: str = 'time',
+                          weights: Optional[xr.DataArray] = None, dim: str = 'time',
                           time_var: str = 'transit_time') -> xr.Dataset:
     """
     Calculate the time duration spent in each quadrant.
@@ -396,7 +396,7 @@ def calc_quadrant_duration(ds: xr.Dataset, analysis_type: str = 'quadrant',
             q_time = q_time.assign_coords(quadrantime=q)
             duration_lst.append(q_time)
 
-    quadrant_duration = xr.concat(duration_lst, dim='quadrant') / total_time
+    quadrant_duration = cast(xr.Dataset, xr.concat(duration_lst, dim='quadrant') / total_time)
     return quadrant_duration
 
 
