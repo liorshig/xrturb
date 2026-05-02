@@ -376,6 +376,12 @@ def _calc_L_1e_kernel(lag_values : np.ndarray, corr_values : np.ndarray) -> floa
         lag_lim, corr_lim = lag_values, corr_values
 
     target = 1 / np.e
+    if len(corr_lim) < 2:
+        warnings.warn(
+                        "Not enough points to determine 1/e length scale. Returning NaN.",
+                        UserWarning, stacklevel=2
+                    )
+        return np.nan
     if np.min(corr_lim) > target:
         warnings.warn(
                         "1/e point not found before zero crossing. Returning NaN.",
@@ -409,7 +415,7 @@ def _calc_L_fit_kernel(lag_values: np.ndarray, corr_values: np.ndarray) -> float
         return np.exp(-x / L)
 
     try:
-        popt = np.asarray(curve_fit(exp_decay, lag_values, corr_values, p0=[50], maxfev=1000)[0], dtype=float)
+        popt = np.asarray(curve_fit(exp_decay, lag_values, corr_values, p0=[50], maxfev=100000)[0], dtype=float)
         return float(popt[0])
     except (ValueError, RuntimeError):
         return np.nan
